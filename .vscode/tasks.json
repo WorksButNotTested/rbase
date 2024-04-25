@@ -1,0 +1,32 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build",
+            "type": "shell",
+            "command": "cargo build",
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}/rbase"
+            }
+        },
+        {
+            "label": "Run",
+            "type": "shell",
+            "command": "cargo run -- /root/6.8.7/Image-arm32",
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}/rbase"
+            }
+        },
+        {
+            "label": "Pretty",
+            "type": "shell",
+            "command": "cargo fmt",
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}/rbase"
+            }
+        },
+    ]
+}
