@@ -1,8 +1,15 @@
 [package]
 name = "rbase"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 repository = "https://github.com/WorksButNotTested/rbase.git"
+authors = [ "WorksButNotTested" ]
+
+[package.metadata.wix]
+upgrade-guid = "920EEC5B-D26F-452C-A791-D3422BEA91D1"
+path-guid = "850A57FF-CA20-4118-8984-C75D3445B262"
+license = false
+eula = false
 
 # The profile that 'cargo dist' will build with
 [profile.dist]
