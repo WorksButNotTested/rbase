@@ -7,7 +7,7 @@
             "command": "cargo build",
             "group": "build",
             "options": {
-                "cwd": "${workspaceFolder}/rbase"
+                "cwd": "${workspaceFolder}"
             }
         },
         {
@@ -16,7 +16,7 @@
             "command": "cargo run -- ${workspaceFolder}/data/Image-arm32",
             "group": "build",
             "options": {
-                "cwd": "${workspaceFolder}/rbase"
+                "cwd": "${workspaceFolder}"
             }
         },
         {
@@ -25,7 +25,7 @@
             "command": "cargo fmt",
             "group": "build",
             "options": {
-                "cwd": "${workspaceFolder}/rbase"
+                "cwd": "${workspaceFolder}"
             }
         },
     ]
