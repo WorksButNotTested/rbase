@@ -2,6 +2,7 @@ FROM ubuntu:22.04 as rbase
 RUN apt-get update && \
     apt-get install -y \
     git \
+    git-lfs \
     curl \
     build-essential
 

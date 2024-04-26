@@ -1,13 +1,14 @@
 use {
     crate::{args::Args, progress::Progress, PAGE_OFFSET_MASK},
+    dashmap::{DashMap, DashSet},
     indicatif::ParallelProgressIterator,
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     regex::bytes::Regex,
-    std::{collections::HashMap, hash::Hash, num::TryFromIntError, ops::BitAnd, thread},
+    std::{hash::Hash, num::TryFromIntError, ops::BitAnd, thread},
 };
 
 pub struct Strings<T> {
-    index: HashMap<T, Vec<T>>,
+    index: DashMap<T, Vec<T>>,
 }
 
 impl<
@@ -52,43 +53,48 @@ impl<
         return strings;
     }
 
-    fn index_strings_by_page_offset(addresses: Vec<T>) -> HashMap<T, Vec<T>> {
-        addresses
-            .into_iter()
-            .fold(HashMap::<T, Vec<T>>::new(), |mut map, pointer| {
-                let offset = pointer & T::try_from(PAGE_OFFSET_MASK).unwrap();
-                if let Some(v) = map.get_mut(&offset) {
-                    v.push(pointer);
-                } else {
-                    map.insert(offset, vec![pointer]);
+    fn get_string_addresses(re: &Regex, chunks: Vec<(usize, &[u8])>) -> DashSet<T> {
+        let pb = Progress::get("Finding strings", chunks.len());
+        let set = DashSet::<T>::new();
+        chunks
+            .par_iter()
+            .progress_with(pb)
+            .for_each(|(offset, chunk)| {
+                let addresses = Self::find_string_addresses_in_chunk(&re, *offset, chunk);
+                for k in addresses {
+                    set.insert(k);
                 }
-                map
-            })
+            });
+        println!("Found: {:?} strings", set.len());
+        set
+    }
+
+    fn index_strings_by_page_offset(addresses: DashSet<T>) -> DashMap<T, Vec<T>> {
+        let pb = Progress::get("Indexing strings", addresses.len());
+        let map = DashMap::<T, Vec<T>>::new();
+        addresses.par_iter().progress_with(pb).for_each(|r| {
+            let &k = r.key();
+            let offset = k & T::try_from(PAGE_OFFSET_MASK).unwrap();
+            if let Some(mut v) = map.get_mut(&offset) {
+                v.push(k);
+            } else {
+                map.insert(offset, vec![k]);
+            }
+        });
+        map
     }
 
     pub fn new(args: &Args, bytes: &[u8]) -> Self {
-        let chunks = Strings::<T>::get_overlapping_chunks(bytes, args.max - 1);
-
+        let chunks = Self::get_overlapping_chunks(bytes, args.max - 1);
         let regex = format!("([a-zA-Z0-9_]{{{},{}}})\0", args.min, args.max);
         let re = Regex::new(&regex).unwrap();
-
-        let pb = Progress::get("Finding strings", chunks.len());
-        let mut addresses = chunks
-            .par_iter()
-            .progress_with(pb)
-            .map(|(offset, chunk)| {
-                Strings::<T>::find_string_addresses_in_chunk(&re, *offset, chunk)
-            })
-            .flatten()
-            .collect::<Vec<T>>();
-        println!("Found: {:?} strings", addresses.len());
-        addresses.dedup();
+        let addresses = Self::get_string_addresses(&re, chunks);
         println!("Found: {:?} unique strings", addresses.len());
         let index = Strings::index_strings_by_page_offset(addresses);
         return Self { index };
     }
 
-    pub fn get(&self, k: &T) -> Option<&Vec<T>> {
-        return self.index.get(k);
+    pub fn get(&self) -> &DashMap<T, Vec<T>> {
+        return &self.index;
     }
 }

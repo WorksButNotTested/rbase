@@ -1,13 +1,13 @@
 use {
     crate::{progress::Progress, Addresses, Strings, PAGE_OFFSET_MASK},
-    indicatif::{ParallelProgressIterator, ProgressIterator},
+    dashmap::DashMap,
+    indicatif::ParallelProgressIterator,
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
     std::{
-        collections::HashMap,
         fmt::{Display, Formatter, LowerHex, Result},
         hash::Hash,
         num::TryFromIntError,
-        ops::{BitAnd, Sub},
+        ops::{BitAnd, Deref, Sub},
     },
 };
 
@@ -30,64 +30,37 @@ impl<
             + TryFrom<usize, Error = TryFromIntError>,
     > Base<T>
 {
-    fn get_base_addresses(strings: &Strings<T>, addresses: &Addresses<T>) -> Vec<T> {
+    fn get_base_addresses(strings: &Strings<T>, addresses: &Addresses<T>) -> DashMap<T, usize> {
         let list = addresses.get_addresses();
         let pb = Progress::get("Collecting candidate base addresses", list.len());
-        list.par_iter()
-            .progress_with(pb)
-            .map(|&ptr| {
-                let mut result = Vec::<T>::new();
-                let offset = ptr & T::try_from(PAGE_OFFSET_MASK).unwrap();
-                if let Some(strings) = strings.get(&offset) {
-                    for &s in strings {
-                        if ptr > s {
-                            let base = ptr - s;
-                            result.push(base);
-                        }
+        let map = DashMap::<T, usize>::new();
+        list.par_iter().progress_with(pb).for_each(|&ptr| {
+            let offset = ptr & T::try_from(PAGE_OFFSET_MASK).unwrap();
+            if let Some(strings) = strings.get().get(&offset) {
+                for &s in strings.deref() {
+                    if ptr > s {
+                        let base = ptr - s;
+                        *map.entry(base).or_insert(0) += 1;
                     }
                 }
-                result
-            })
-            .flatten()
-            .collect::<Vec<T>>()
+            }
+        });
+        map
     }
 
-    fn get_candidate_base_address_frequencies(bases: Vec<T>) -> Vec<HashMap<T, usize>> {
-        let pb = Progress::get("Collecting candidate base address frequencies", bases.len());
-        bases
-            .par_iter()
-            .progress_with(pb)
-            .fold(HashMap::<T, usize>::new, |mut map, &base| {
-                if let Some(v) = map.get(&base) {
-                    map.insert(base, *v + 1);
-                } else {
-                    map.insert(base, 1);
-                }
-                map
-            })
-            .collect::<Vec<HashMap<T, usize>>>()
+    fn filter_base_addresses(bases: DashMap<T, usize>) -> DashMap<T, usize> {
+        let map = DashMap::<T, usize>::new();
+        let pb = Progress::get("Filtering base addresses", bases.len());
+        bases.par_iter().progress_with(pb).for_each(|r| {
+            let (&k, &v) = r.pair();
+            if v > 1 {
+                map.insert(k, v);
+            }
+        });
+        map
     }
 
-    fn collate_candidate_base_address_frequencies(
-        bases: Vec<HashMap<T, usize>>,
-    ) -> HashMap<T, usize> {
-        let pb = Progress::get("Collating base address candidate frequencies", bases.len());
-        bases.into_iter().progress_with(pb).fold(
-            HashMap::<T, usize>::new(),
-            |mut map, base_count| {
-                for (base, count) in base_count.into_iter() {
-                    if let Some(v) = map.get(&base) {
-                        map.insert(base, *v + count);
-                    } else {
-                        map.insert(base, count);
-                    }
-                }
-                map
-            },
-        )
-    }
-
-    fn get_ordered_base_addresses(collated: HashMap<T, usize>) -> Vec<(T, usize)> {
+    fn get_ordered_base_addresses(collated: DashMap<T, usize>) -> Vec<(T, usize)> {
         let mut sorted: Vec<(T, usize)> = collated.into_iter().collect();
         sorted.sort_by(|(_a1, v1), (_a2, v2)| v2.cmp(v1));
         sorted
@@ -98,11 +71,11 @@ impl<
         let num_candidates = base_addresses.len();
         println!("Found: {:?} candidates", num_candidates);
 
-        let frequencies = Self::get_candidate_base_address_frequencies(base_addresses);
-        let collated = Self::collate_candidate_base_address_frequencies(frequencies);
-        println!("Found: {:?} unique candidates", collated.len());
+        let filtered = Self::filter_base_addresses(base_addresses);
+        let num_filtered = filtered.len();
+        println!("Found: {:?} filtered candidates", num_filtered);
 
-        let sorted = Self::get_ordered_base_addresses(collated);
+        let sorted = Self::get_ordered_base_addresses(filtered);
         for (idx, (base, frequency)) in sorted.iter().take(10).enumerate() {
             let pct = 100.0 * (*frequency as f64) / (num_candidates as f64);
             println!("{:2}: {base:x}: {frequency} ({pct:.2}%)", idx + 1);

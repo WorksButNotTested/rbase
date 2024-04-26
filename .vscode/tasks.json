@@ -11,9 +11,37 @@
             }
         },
         {
-            "label": "Run",
+            "label": "Build - Release",
             "type": "shell",
-            "command": "cargo run -- ${workspaceFolder}/data/Image-arm32",
+            "command": "cargo build --release",
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "Run 32 - Debug",
+            "type": "shell",
+            "command": "cargo run -- ${workspaceFolder}/data/Image-arm32le",
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": { "RUST_BACKTRACE": "1" }
+            }
+        },
+        {
+            "label": "Run 32 - Release",
+            "type": "shell",
+            "command": "cargo run --release -- ${workspaceFolder}/data/Image-arm32le",
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "Run 64 - Release",
+            "type": "shell",
+            "command": "cargo run --release -- --64 --big ${workspaceFolder}/data/Image-arm64be",
             "group": "build",
             "options": {
                 "cwd": "${workspaceFolder}"
