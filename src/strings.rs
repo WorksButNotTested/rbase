@@ -94,7 +94,7 @@ impl<
         return Self { index };
     }
 
-    pub fn get(&self) -> &DashMap<T, Vec<T>> {
+    pub fn get_strings(&self) -> &DashMap<T, Vec<T>> {
         return &self.index;
     }
 }

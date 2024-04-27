@@ -31,12 +31,13 @@ impl<
     > Base<T>
 {
     fn get_base_addresses(strings: &Strings<T>, addresses: &Addresses<T>) -> DashMap<T, usize> {
-        let list = addresses.get_addresses();
-        let pb = Progress::get("Collecting candidate base addresses", list.len());
+        let strs = strings.get_strings();
+        let addrs = addresses.get_addresses();
+        let pb = Progress::get("Collecting candidate base addresses", strs.len());
         let map = DashMap::<T, usize>::new();
-        list.par_iter().progress_with(pb).for_each(|r| {
-            let (offset, addresses) = r.pair();
-            if let Some(strings) = strings.get().get(offset) {
+        strs.par_iter().progress_with(pb).for_each(|r| {
+            let (offset, strings) = r.pair();
+            if let Some(addresses) = addrs.get(offset) {
                 for &s in strings.deref() {
                     for &a in addresses.deref() {
                         if a > s {
