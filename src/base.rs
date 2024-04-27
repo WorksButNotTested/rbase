@@ -1,5 +1,5 @@
 use {
-    crate::{progress::Progress, Addresses, Strings, PAGE_OFFSET_MASK},
+    crate::{progress::Progress, Addresses, Strings},
     dashmap::DashMap,
     indicatif::ParallelProgressIterator,
     rayon::iter::{IntoParallelRefIterator, ParallelIterator},
@@ -34,13 +34,15 @@ impl<
         let list = addresses.get_addresses();
         let pb = Progress::get("Collecting candidate base addresses", list.len());
         let map = DashMap::<T, usize>::new();
-        list.par_iter().progress_with(pb).for_each(|&ptr| {
-            let offset = ptr & T::try_from(PAGE_OFFSET_MASK).unwrap();
-            if let Some(strings) = strings.get().get(&offset) {
+        list.par_iter().progress_with(pb).for_each(|r| {
+            let (offset, addresses) = r.pair();
+            if let Some(strings) = strings.get().get(offset) {
                 for &s in strings.deref() {
-                    if ptr > s {
-                        let base = ptr - s;
-                        *map.entry(base).or_insert(0) += 1;
+                    for &a in addresses.deref() {
+                        if a > s {
+                            let base = a - s;
+                            *map.entry(base).or_insert(0) += 1;
+                        }
                     }
                 }
             }
