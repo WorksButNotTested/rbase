@@ -92,6 +92,22 @@ pub struct Args {
         default_value = "8"
     )]
     pub jobs: usize,
+
+    #[arg(
+        short = 's',
+        long = "max-strings",
+        help = "Maximum number of strings to sample",
+        default_value = "100000"
+    )]
+    pub max_strings: usize,
+
+    #[arg(
+        short = 'a',
+        long = "max-addresses",
+        help = "Maximum number of addresses to sample",
+        default_value = "1000000"
+    )]
+    pub max_addresses: usize,
 }
 
 impl Args {
@@ -169,7 +185,7 @@ impl<
     }
 
     fn get_string_offsets(min: usize, max: usize, chunks: Vec<(usize, &[u8])>) -> DashSet<T> {
-        let regex = format!("([a-zA-Z0-9_]{{{},{}}})\0", min, max);
+        let regex = format!("([[:print:][:space:]]{{{},{}}})\0", min, max);
         let re = Regex::new(&regex).unwrap();
         let pb = Self::get_progress_bar("Finding strings", chunks.len());
         let set = DashSet::<T>::new();
@@ -182,14 +198,13 @@ impl<
                     set.insert(k);
                 });
             });
-        println!("Found: {:?} strings", set.len());
         set
     }
 
-    fn index_strings_by_page_offset(addresses: DashSet<T>) -> DashMap<T, Vec<T>> {
-        let pb = Self::get_progress_bar("Indexing strings", addresses.len());
+    fn index_strings_by_page_offset(strings: DashSet<T>) -> DashMap<T, Vec<T>> {
+        let pb = Self::get_progress_bar("Indexing strings", strings.len());
         let map = DashMap::<T, Vec<T>>::new();
-        addresses.into_par_iter().progress_with(pb).for_each(|k| {
+        strings.into_par_iter().progress_with(pb).for_each(|k| {
             let offset = k & T::try_from(PAGE_OFFSET_MASK).unwrap();
             if let Some(mut v) = map.get_mut(&offset) {
                 v.push(k);
@@ -203,37 +218,40 @@ impl<
     pub fn get_strings_by_page_offset(min: usize, max: usize, bytes: &[u8]) -> DashMap<T, Vec<T>> {
         let chunks = Self::get_overlapping_chunks(bytes, max - 1);
         let addresses = Self::get_string_offsets(min, max, chunks);
-        println!("Found: {:?} unique strings", addresses.len());
+        println!("Found: {:?} strings", addresses.len());
         let index = Self::index_strings_by_page_offset(addresses);
         index
     }
 
     /* Addresses */
-    fn get_address_frequencies<F: Fn(&[u8]) -> T + Sync + Send>(
+    fn get_addresses<F: Fn(&[u8]) -> T + Sync + Send>(
         bytes: &[u8],
         convert: F,
-    ) -> DashMap<T, usize> {
+    ) -> DashSet<T> {
         let chunks = bytes.chunks(size_of::<T>()).collect::<Vec<&[u8]>>();
         let pb = Self::get_progress_bar("Reading addresses", chunks.len());
-        let map = DashMap::<T, usize>::new();
+        let set = DashSet::<T>::new();
         chunks
             .into_par_iter()
             .progress_with(pb)
             .map(|p| convert(p))
             .filter(|&p| p != T::default())
             .for_each(|ptr| {
-                *map.entry(ptr).or_insert(0) += 1;
+                set.insert(ptr);
             });
-        map
+        set
     }
 
-    fn index_unique_addresses_by_page_offset(frequencies: DashMap<T, usize>) -> DashMap<T, Vec<T>> {
+    fn index_addresses_by_page_offset(
+        addresses: DashSet<T>,
+        max_addresses: usize,
+    ) -> DashMap<T, Vec<T>> {
         let map = DashMap::<T, Vec<T>>::new();
-        let pb = Self::get_progress_bar("Finding unique addresses", frequencies.len());
-        frequencies
+        let pb = Self::get_progress_bar("Indexing addresses", addresses.len());
+        addresses
             .into_par_iter()
+            .take_any(max_addresses)
             .progress_with(pb)
-            .filter_map(|(k, v)| if v > 1 { Some(k) } else { None })
             .for_each(|k| {
                 let offset = k & T::try_from(PAGE_OFFSET_MASK).unwrap();
                 if let Some(mut v) = map.get_mut(&offset) {
@@ -248,13 +266,13 @@ impl<
     pub fn get_addresses_by_page_offset<F: Fn(&[u8]) -> T + Sync + Send + Copy>(
         bytes: &[u8],
         convert: F,
+        max_addresses: usize,
     ) -> DashMap<T, Vec<T>> {
-        let frequencies = Self::get_address_frequencies(bytes, convert);
-        println!("Found: {:?} addresses", frequencies.len());
+        let addresses = Self::get_addresses(bytes, convert);
+        println!("Found: {:?} addresses", addresses.len());
 
-        let addresses = Self::index_unique_addresses_by_page_offset(frequencies);
-        println!("Found: {:?} unique addresses", addresses.len());
-        addresses
+        let index = Self::index_addresses_by_page_offset(addresses, max_addresses);
+        index
     }
 
     /* Addresses */
@@ -268,7 +286,7 @@ impl<
             let (offset, strings) = r.pair();
             if let Some(addresses) = addresses.get(offset) {
                 for &s in strings.iter() {
-                    for &a in addresses.iter().filter(|&&a| a > s) {
+                    for &a in addresses.iter().filter(|&&a| a >= s) {
                         *map.entry(a - s).or_insert(0) += 1;
                     }
                 }
@@ -290,7 +308,7 @@ impl<
     pub fn get_most_frequent_candidate_base_address(
         strings: &DashMap<T, Vec<T>>,
         addresses: &DashMap<T, Vec<T>>,
-    ) -> T {
+    ) -> Option<T> {
         let base_addresses = Self::get_candidate_base_addresses(strings, addresses);
         let num_candidates = base_addresses.len();
         println!("Found: {:?} candidates", num_candidates);
@@ -301,11 +319,11 @@ impl<
         let sorted = Self::sort_candidate_base_addresses_by_frequency(filtered);
         for (idx, (base, frequency)) in sorted.iter().take(10).enumerate() {
             let pct = 100.0 * (*frequency as f64) / (num_candidates as f64);
-            println!("{:2}: {base:x}: {frequency} ({pct:.2}%)", idx + 1);
+            println!("{:2}: {base:0x}: {frequency} ({pct:.2}%)", idx + 1);
         }
 
-        let (base, _frequency) = sorted.first().unwrap().clone();
-        base
+        let (base, _frequency) = sorted.first().cloned()?;
+        Some(base)
     }
 }
 
@@ -328,9 +346,15 @@ fn main() {
                     Endian::Little => |bytes: &[u8]| u32::from_le_bytes(bytes.try_into().unwrap()),
                     Endian::Big => |bytes: &[u8]| u32::from_be_bytes(bytes.try_into().unwrap()),
                 },
+                args.max_addresses,
             );
-            let base = RBase::get_most_frequent_candidate_base_address(&strings, &addresses);
-            println!("Found base: {:x}", base);
+            if let Some(base) =
+                RBase::get_most_frequent_candidate_base_address(&strings, &addresses)
+            {
+                println!("Found base: {:0x}", base);
+            } else {
+                println!("No base found");
+            }
         }
         Size::Bits64 => {
             let strings = RBase::get_strings_by_page_offset(args.min, args.max, bytes);
@@ -340,9 +364,15 @@ fn main() {
                     Endian::Little => |bytes: &[u8]| u64::from_le_bytes(bytes.try_into().unwrap()),
                     Endian::Big => |bytes: &[u8]| u64::from_be_bytes(bytes.try_into().unwrap()),
                 },
+                args.max_addresses,
             );
-            let base = RBase::get_most_frequent_candidate_base_address(&strings, &addresses);
-            println!("Found base: {:x}", base);
+            if let Some(base) =
+                RBase::get_most_frequent_candidate_base_address(&strings, &addresses)
+            {
+                println!("Found base: {:x}", base);
+            } else {
+                println!("No base found");
+            }
         }
     };
     let end = start.elapsed();
