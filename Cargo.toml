@@ -1,6 +1,6 @@
 [package]
 name = "rbase"
-version = "0.1.9"
+version = "0.2.0"
 edition = "2021"
 repository = "https://github.com/WorksButNotTested/rbase.git"
 authors = [ "WorksButNotTested" ]
@@ -40,6 +40,5 @@ clap = { version = "4.5.4", features = ["derive"] }
 dashmap = { version = "5.5.3", features = ["rayon"] }
 indicatif = { version = "0.17.8", features = ["rayon"] }
 memmap2 = "0.9.4"
-num_cpus = "1.16.0"
 rayon = "1.10.0"
 regex = "1.10.4"
